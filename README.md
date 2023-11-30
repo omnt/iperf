@@ -32,8 +32,6 @@ Source code and issue tracker: https://github.com/esnet/iperf
 
 Discussion forums: https://github.com/esnet/iperf/discussions
 
-Reporting security vulnerabilities: iperf@es.net
-
 Obtaining iperf3
 ----------------
 
@@ -80,8 +78,8 @@ These flags include:
     -Z, --zerocopy            use a 'zero copy' sendfile() method of sending data
     -A, --affinity n/n,m      set CPU affinity
 
-Bug and Security Reports
-------------------------
+Bug Reports
+-----------
 
 Before submitting a bug report, please make sure you're running the
 latest version of the code, and confirm that your issue has not
@@ -101,11 +99,6 @@ sensitive information.
 If you have a question about usage or about the code, please do *not*
 submit an issue.  Please use one of the mailing lists for that.
 
-If you suspect there is a potential security issue, please contact the
-developers at:
-
-iperf@es.net
-
 Relation to iperf 2.x
 ---------------------
 
@@ -114,6 +107,26 @@ they are not compatible with each other.
 The projects (as of mid-2021) are in active, but separate, development.
 The continuing iperf2 development
 project can be found at https://sourceforge.net/projects/iperf2/.
+
+iperf3 contains a number of options and functions not present in
+iperf2.  In addition, some flags are changed from their iperf2
+counterparts:
+
+    -C, --linux-congestion    set congestion control algorithm (Linux only)
+                              (-Z in iperf2)
+    --bidir                   bidirectional testing mode
+                              (-d in iperf2)
+
+Some iperf2 options are not available in iperf3:
+
+    -r, --tradeoff           Do a bidirectional test individually
+    -T, --ttl                time-to-live, for multicast (default 1)
+    -x, --reportexclude [CDMSV]   exclude C(connection) D(data) M(multicast)
+                                  S(settings) V(server) reports
+    -y, --reportstyle C      report as a Comma-Separated Values
+
+Also removed is the ability to set the options via environment
+variables.
 
 Known Issues
 ------------
@@ -137,7 +150,7 @@ responsibility for the content of these pages.
 Copyright
 ---------
 
-iperf, Copyright (c) 2014-2023, The Regents of the University of
+iperf, Copyright (c) 2014-2022, The Regents of the University of
 California, through Lawrence Berkeley National Laboratory (subject
 to receipt of any required approvals from the U.S. Dept. of
 Energy).  All rights reserved.
