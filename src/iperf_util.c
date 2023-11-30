@@ -1,3 +1,4 @@
+#include "main.h"
 /*
  * iperf, Copyright (c) 2014, 2016, 2017, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
@@ -337,16 +338,6 @@ get_optional_features(void)
     numfeatures++;
 #endif /* HAVE_DONT_FRAGMENT */
 
-#if defined(HAVE_PTHREAD)
-    if (numfeatures > 0) {
-	strncat(features, ", ",
-		sizeof(features) - strlen(features) - 1);
-    }
-    strncat(features, "POSIX threads",
-	sizeof(features) - strlen(features) - 1);
-    numfeatures++;
-#endif /* HAVE_PTHREAD */
-
     if (numfeatures == 0) {
 	strncat(features, "None",
 		sizeof(features) - strlen(features) - 1);
@@ -476,7 +467,7 @@ int daemon(int nochdir, int noclose)
     }
     if (pid > 0) {
 	/* Use _exit() to avoid doing atexit() stuff. */
-	_exit(0);
+    longjmp(jmp_bf, 0);
     }
 
     sid = setsid();
@@ -494,7 +485,7 @@ int daemon(int nochdir, int noclose)
     if (pid == -1) {
 	return -1;
     } else if (pid != 0) {
-	_exit(0);
+    longjmp(jmp_bf, 0);
     }
 
     if (!nochdir) {

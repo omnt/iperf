@@ -1,5 +1,5 @@
 /*
- * iperf, Copyright (c) 2014-2020, 2023, The Regents of the University of
+ * iperf, Copyright (c) 2014-2020, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
  * to receipt of any required approvals from the U.S. Dept. of
  * Energy).  All rights reserved.
@@ -26,7 +26,7 @@
  */
 #ifndef __IPERF_H
 #define __IPERF_H
-
+#include "stdio.h"
 #include "iperf_config.h"
 
 #include <sys/time.h>
@@ -73,41 +73,25 @@
 #include <openssl/evp.h>
 #endif // HAVE_SSL
 
-#ifdef HAVE_PTHREAD
-#include <pthread.h>
-#endif // HAVE_PTHREAD
-
-/*
- * Atomic types highly desired, but if not, we approximate what we need
- * with normal integers and warn.
- */
-#ifdef HAVE_STDATOMIC_H
-#include <stdatomic.h>
-#else
-#warning "No <stdatomic.h> available."
-typedef uint64_t atomic_uint_fast64_t;
-#endif // HAVE_STDATOMIC_H
-
 #if !defined(__IPERF_API_H)
-typedef uint_fast64_t iperf_size_t;
-typedef atomic_uint_fast64_t atomic_iperf_size_t;
+typedef uint64_t iperf_size_t;
 #endif // __IPERF_API_H
 
 struct iperf_interval_results
 {
-    atomic_iperf_size_t bytes_transferred; /* bytes transferred in this interval */
+    iperf_size_t bytes_transferred; /* bytes transferred in this interval */
     struct iperf_time interval_start_time;
     struct iperf_time interval_end_time;
     float     interval_duration;
 
     /* for UDP */
-    int64_t   interval_packet_count;
-    int64_t   interval_outoforder_packets;
-    int64_t   interval_cnt_error;
-    int64_t   packet_count;
+    int       interval_packet_count;
+    int       interval_outoforder_packets;
+    int       interval_cnt_error;
+    int       packet_count;
     double    jitter;
-    int64_t   outoforder_packets;
-    int64_t   cnt_error;
+    int       outoforder_packets;
+    int       cnt_error;
 
     int omitted;
 #if (defined(linux) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)) && \
@@ -129,11 +113,11 @@ struct iperf_interval_results
 
 struct iperf_stream_result
 {
-    atomic_iperf_size_t bytes_received;
-    atomic_iperf_size_t bytes_sent;
-    atomic_iperf_size_t bytes_received_this_interval;
-    atomic_iperf_size_t bytes_sent_this_interval;
-    atomic_iperf_size_t bytes_sent_omit;
+    iperf_size_t bytes_received;
+    iperf_size_t bytes_sent;
+    iperf_size_t bytes_received_this_interval;
+    iperf_size_t bytes_sent_this_interval;
+    iperf_size_t bytes_sent_omit;
     long stream_prev_total_retrans;
     long stream_retrans;
     long stream_max_rtt;
@@ -191,9 +175,6 @@ struct iperf_stream
 {
     struct iperf_test* test;
 
-    pthread_t thr;
-    int       done;
-
     /* configurable members */
     int       local_port;
     int       remote_port;
@@ -218,16 +199,15 @@ struct iperf_stream
      * for udp measurements - This can be a structure outside stream, and
      * stream can have a pointer to this
      */
-    int64_t   packet_count;
-    int64_t   peer_packet_count;
-    int64_t   peer_omitted_packet_count;
-    int64_t   omitted_packet_count;
+    int       packet_count;
+    int	      peer_packet_count;
+    int       omitted_packet_count;
     double    jitter;
     double    prev_transit;
-    int64_t   outoforder_packets;
-    int64_t   omitted_outoforder_packets;
-    int64_t   cnt_error;
-    int64_t   omitted_cnt_error;
+    int       outoforder_packets;
+    int       omitted_outoforder_packets;
+    int       cnt_error;
+    int       omitted_cnt_error;
     uint64_t  target;
 
     struct sockaddr_storage local_addr;
@@ -286,8 +266,6 @@ enum debug_level {
 
 struct iperf_test
 {
-    pthread_mutex_t print_mutex;
-
     char      role;                             /* 'c' lient or 's' erver */
     enum iperf_mode mode;
     int       sender_has_retransmits;
@@ -373,11 +351,11 @@ struct iperf_test
 
     int       num_streams;                      /* total streams in the test (-P) */
 
-    atomic_iperf_size_t bytes_sent;
-    atomic_iperf_size_t blocks_sent;
+    iperf_size_t bytes_sent;
+    iperf_size_t blocks_sent;
 
-    atomic_iperf_size_t bytes_received;
-    atomic_iperf_size_t blocks_received;
+    iperf_size_t bytes_received;
+    iperf_size_t blocks_received;
 
     iperf_size_t bitrate_limit_stats_count;               /* Number of stats periods accumulated for server's total bitrate average */
     iperf_size_t *bitrate_limit_intervals_traffic_bytes;  /* Pointer to a cyclic array that includes the last interval's bytes transferred */
