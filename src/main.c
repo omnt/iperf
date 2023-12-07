@@ -1,3 +1,4 @@
+#include "main.h"
 /*
  * iperf, Copyright (c) 2014-2022, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
@@ -51,14 +52,12 @@
 
 
 static int run(struct iperf_test *test);
-
-
+jmp_buf jmp_bf;
+struct iperf_test *test;
 /**************************************************************************/
 int
 main(int argc, char **argv)
 {
-    struct iperf_test *test;
-
     // XXX: Setting the process affinity requires root on most systems.
     //      Is this a feature we really need?
 #ifdef TEST_PROC_AFFINITY
@@ -102,11 +101,23 @@ main(int argc, char **argv)
         iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
         fprintf(stderr, "\n");
         usage_long(stdout);
-        exit(1);
+    	return 1;
     }
-
-    if (run(test) < 0)
-        iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+	int result_test = 0;
+	int ret_value = setjmp(jmp_bf);
+	switch (ret_value){
+	case 0:
+		result_test = run(test);
+		break;
+	case 50:
+		result_test = 0;
+		break;
+	default:
+		result_test = ret_value;
+		break;
+	}
+	if (result_test < 0)
+		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 
     iperf_free_test(test);
 
@@ -120,6 +131,11 @@ static void __attribute__ ((noreturn))
 sigend_handler(int sig)
 {
     longjmp(sigend_jmp_buf, 1);
+}
+
+
+void stopRun(){
+    test->done = 1;
 }
 
 /**************************************************************************/
