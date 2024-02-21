@@ -48,6 +48,10 @@ iperf_err(struct iperf_test *test, const char *format, ...)
     struct tm *ltm = NULL;
     char *ct = NULL;
 
+    if (pthread_mutex_lock(&(test->print_mutex)) != 0) {
+        perror("iperf_err: pthread_mutex_lock");
+    }
+
     /* Timestamp if requested */
     if (test != NULL && test->timestamps) {
 	time(&now);
@@ -75,6 +79,10 @@ iperf_err(struct iperf_test *test, const char *format, ...)
 	}
     }
     va_end(argp);
+
+    if (pthread_mutex_unlock(&(test->print_mutex)) != 0) {
+        perror("iperf_err: pthread_mutex_unlock");
+    }
 }
 
 /* Do a printf to stderr or log file as appropriate, then exit. */
@@ -86,6 +94,10 @@ iperf_errexit(struct iperf_test *test, const char *format, ...)
     time_t now;
     struct tm *ltm = NULL;
     char *ct = NULL;
+
+    if (pthread_mutex_lock(&(test->print_mutex)) != 0) {
+        perror("iperf_errexit: pthread_mutex_lock");
+    }
 
     /* Timestamp if requested */
     if (test != NULL && test->timestamps) {
@@ -115,6 +127,11 @@ iperf_errexit(struct iperf_test *test, const char *format, ...)
 	    }
 	    fprintf(stderr, "iperf3: %s\n", str);
 	}
+
+    if (pthread_mutex_unlock(&(test->print_mutex)) != 0) {
+        perror("iperf_errexit: pthread_mutex_unlock");
+    }
+
     va_end(argp);
     if (test)
         iperf_delete_pidfile(test);
@@ -178,6 +195,9 @@ iperf_strerror(int int_errno)
             break;
         case IESETSERVERAUTH:
              snprintf(errstr, len, "you must specify a path to a valid RSA private key and a user credential file");
+            break;
+        case IESERVERAUTHUSERS:
+             snprintf(errstr, len, "cannot access authorized users file");
             break;
 	case IEBADFORMAT:
 	    snprintf(errstr, len, "bad format specifier (valid formats are in the set [kmgtKMGT])");
@@ -466,6 +486,26 @@ iperf_strerror(int int_errno)
             break;
         case IESETUSERTIMEOUT:
             snprintf(errstr, len, "unable to set TCP USER_TIMEOUT");
+            perr = 1;
+            break;
+	case IEPTHREADCREATE:
+            snprintf(errstr, len, "unable to create thread");
+            perr = 1;
+            break;
+	case IEPTHREADCANCEL:
+            snprintf(errstr, len, "unable to cancel thread");
+            perr = 1;
+            break;
+	case IEPTHREADJOIN:
+            snprintf(errstr, len, "unable to join thread");
+            perr = 1;
+            break;
+	case IEPTHREADATTRINIT:
+            snprintf(errstr, len, "unable to create thread attributes");
+            perr = 1;
+            break;
+	case IEPTHREADATTRDESTROY:
+            snprintf(errstr, len, "unable to destroy thread attributes");
             perr = 1;
             break;
 	default:

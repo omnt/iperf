@@ -1,6 +1,6 @@
 #include "main.h"
 /*
- * iperf, Copyright (c) 2014-2022, The Regents of the University of
+ * iperf, Copyright (c) 2014-2023, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
  * to receipt of any required approvals from the U.S. Dept. of
  * Energy).  All rights reserved.
@@ -26,6 +26,7 @@
  * file for complete information.
  */
 #include "iperf_config.h"
+#include <android/log.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,7 +50,10 @@
 #include "iperf_locale.h"
 #include "net.h"
 #include "units.h"
+#define  LOG_TAG    "main"
 
+#define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static int run(struct iperf_test *test);
 jmp_buf jmp_bf;
@@ -58,6 +62,25 @@ struct iperf_test *test;
 int
 main(int argc, char **argv)
 {
+
+    /*
+     * Atomics check. We prefer to have atomic types (which is
+     * basically on any compiler supporting C11 or better). If we
+     * don't have them, we try to approximate the type we need with a
+     * regular integer, but complain if they're not lock-free. We only
+     * know how to check this on GCC. GCC on CentOS 7 / RHEL 7 is the
+     * targeted use case for these check.
+     */
+#ifndef HAVE_STDATOMIC_H
+#ifdef __GNUC__
+    if (! __atomic_always_lock_free (sizeof (u_int64_t), 0)) {
+#endif // __GNUC__
+        fprintf(stderr, "Warning: Cannot guarantee lock-free operation with 64-bit data types\n");
+#ifdef __GNUC__
+    }
+#endif // __GNUC__
+#endif // HAVE_STDATOMIC_H
+
     // XXX: Setting the process affinity requires root on most systems.
     //      Is this a feature we really need?
 #ifdef TEST_PROC_AFFINITY
@@ -96,6 +119,7 @@ main(int argc, char **argv)
     if (!test)
         iperf_errexit(NULL, "create new test error - %s", iperf_strerror(i_errno));
     iperf_defaults(test);	/* sets defaults */
+
     if (iperf_parse_arguments(test, argc, argv) < 0) {
         iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
         fprintf(stderr, "\n");
@@ -119,10 +143,9 @@ main(int argc, char **argv)
 	if (result_test < 0)
 		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 
-
     iperf_free_test(test);
 
-    return 0;
+    return result_test;
 }
 
 
@@ -136,7 +159,8 @@ sigend_handler(int sig)
 
 
 void stopRun(){
-    test->done = 1;
+	LOGD("stopRun() called!\n");
+	test->done = 1;
 }
 
 /**************************************************************************/
@@ -195,10 +219,10 @@ run(struct iperf_test *test)
 	case 'c':
 	    if (iperf_create_pidfile(test) < 0) {
 		i_errno = IEPIDFILE;
-		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+			iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 	    }
 	    if (iperf_run_client(test) < 0)
-		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+			iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 	    iperf_delete_pidfile(test);
             break;
         default:

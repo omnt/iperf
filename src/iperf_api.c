@@ -1151,6 +1151,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
     server_flag = client_flag = rate_flag = duration_flag = rcv_timeout_flag = snd_timeout_flag =0;
 #if defined(HAVE_SSL)
     char *client_username = NULL, *client_rsa_public_key = NULL, *server_rsa_private_key = NULL;
+    FILE *ptr_file;
 #endif /* HAVE_SSL */
 
     while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:M:N46S:L:ZO:F:A:T:C:dI:hX:", longopts, NULL)) != -1) {
@@ -1685,7 +1686,18 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
         !(server_rsa_private_key && test->server_authorized_users)) {
          i_errno = IESETSERVERAUTH;
         return -1;
-    } else if (test->role == 's' && server_rsa_private_key) {
+    }
+
+    if (test->role == 's' && test->server_authorized_users) {
+        ptr_file =fopen(test->server_authorized_users, "r");
+        if (!ptr_file) {
+            i_errno = IESERVERAUTHUSERS;
+            return -1;
+        }
+        fclose(ptr_file);
+    }
+
+    if (test->role == 's' && server_rsa_private_key) {
         test->server_rsa_private_key = load_privkey_from_file(server_rsa_private_key);
         if (test->server_rsa_private_key == NULL){
             iperf_err(test, "%s\n", ERR_error_string(ERR_get_error(), NULL));
@@ -1850,10 +1862,8 @@ iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP)
     bits_per_second = sp->result->bytes_sent * 8 / seconds;
     if (bits_per_second < sp->test->settings->rate) {
         sp->green_light = 1;
-        FD_SET(sp->socket, &sp->test->write_set);
     } else {
         sp->green_light = 0;
-        FD_CLR(sp->socket, &sp->test->write_set);
     }
 }
 
@@ -1880,7 +1890,7 @@ iperf_check_total_rate(struct iperf_test *test, iperf_size_t last_interval_bytes
         return;
 
      /* Calculating total bytes traffic to be averaged */
-    for (total_bytes = 0, i = 0; i < test->settings->bitrate_limit_stats_per_interval; i++) {
+    for (i = 0, total_bytes = 0; i < test->settings->bitrate_limit_stats_per_interval; i++) {
         total_bytes += test->bitrate_limit_intervals_traffic_bytes[i];
     }
 
@@ -1898,10 +1908,10 @@ iperf_check_total_rate(struct iperf_test *test, iperf_size_t last_interval_bytes
 }
 
 int
-iperf_send(struct iperf_test *test, fd_set *write_setP)
+iperf_send_mt(struct iperf_stream *sp)
 {
     register int multisend, r, streams_active;
-    register struct iperf_stream *sp;
+    register struct iperf_test *test = sp->test;
     struct iperf_time now;
     int no_throttle_check;
 
@@ -1920,13 +1930,14 @@ iperf_send(struct iperf_test *test, fd_set *write_setP)
 	if (no_throttle_check)
 	    iperf_time_now(&now);
 	streams_active = 0;
-	SLIST_FOREACH(sp, &test->streams, streams) {
-	    if ((sp->green_light && sp->sender &&
-		 (write_setP == NULL || FD_ISSET(sp->socket, write_setP)))) {
-        if (multisend > 1 && test->settings->bytes != 0 && test->bytes_sent >= test->settings->bytes)
-            break;
-        if (multisend > 1 && test->settings->blocks != 0 && test->blocks_sent >= test->settings->blocks)
-            break;
+	{
+	    if (sp->green_light && sp->sender) {
+                // XXX If we hit one of these ending conditions maybe
+                // want to stop even trying to send something?
+                if (multisend > 1 && test->settings->bytes != 0 && test->bytes_sent >= test->settings->bytes)
+                    break;
+                if (multisend > 1 && test->settings->blocks != 0 && test->blocks_sent >= test->settings->blocks)
+                    break;
 		if ((r = sp->snd(sp)) < 0) {
 		    if (r == NET_SOFTERROR)
 			break;
@@ -1946,35 +1957,24 @@ iperf_send(struct iperf_test *test, fd_set *write_setP)
     }
     if (!no_throttle_check) {   /* Throttle check if was not checked for each send */
 	iperf_time_now(&now);
-	SLIST_FOREACH(sp, &test->streams, streams)
-	    if (sp->sender)
-	        iperf_check_throttle(sp, &now);
+        if (sp->sender)
+            iperf_check_throttle(sp, &now);
     }
-    if (write_setP != NULL)
-	SLIST_FOREACH(sp, &test->streams, streams)
-	    if (FD_ISSET(sp->socket, write_setP))
-		FD_CLR(sp->socket, write_setP);
-
     return 0;
 }
 
 int
-iperf_recv(struct iperf_test *test, fd_set *read_setP)
+iperf_recv_mt(struct iperf_stream *sp)
 {
     int r;
-    struct iperf_stream *sp;
+    struct iperf_test *test = sp->test;
 
-    SLIST_FOREACH(sp, &test->streams, streams) {
-	if (FD_ISSET(sp->socket, read_setP) && !sp->sender) {
 	    if ((r = sp->rcv(sp)) < 0) {
 		i_errno = IESTREAMREAD;
 		return r;
 	    }
 	    test->bytes_received += r;
 	    ++test->blocks_received;
-	    FD_CLR(sp->socket, read_setP);
-	}
-    }
 
     return 0;
 }
@@ -2796,6 +2796,7 @@ struct iperf_test *
 iperf_new_test()
 {
     struct iperf_test *test;
+    int rc;
 
     test = (struct iperf_test *) malloc(sizeof(struct iperf_test));
     if (!test) {
@@ -2804,6 +2805,21 @@ iperf_new_test()
     }
     /* initialize everything to zero */
     memset(test, 0, sizeof(struct iperf_test));
+
+    /* Initialize mutex for printing output */
+    pthread_mutexattr_t mutexattr;
+    pthread_mutexattr_init(&mutexattr);
+    rc = pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_ERRORCHECK);
+    if (rc != 0) {
+        errno = rc;
+        perror("iperf_new_test: pthread_mutexattr_settype");
+    }
+
+    if (pthread_mutex_init(&(test->print_mutex), &mutexattr) != 0) {
+        perror("iperf_new_test: pthread_mutex_init");
+    }
+
+    pthread_mutexattr_destroy(&mutexattr);
 
     test->settings = (struct iperf_settings *) malloc(sizeof(struct iperf_settings));
     if (!test->settings) {
@@ -3056,6 +3072,14 @@ iperf_free_test(struct iperf_test *test)
         prot = SLIST_FIRST(&test->protocols);
         SLIST_REMOVE_HEAD(&test->protocols, protocols);
         free(prot);
+    }
+
+    /* Destroy print mutex. iperf_printf() doesn't work after this point */
+    int rc;
+    rc = pthread_mutex_destroy(&(test->print_mutex));
+    if (rc != 0) {
+        errno = rc;
+        perror("iperf_free_test: pthread_mutex_destroy");
     }
 
     if (test->logfile) {
@@ -4787,7 +4811,14 @@ iperf_json_finish(struct iperf_test *test)
         if (test->json_output_string == NULL) {
             return -1;
         }
+
+        if (pthread_mutex_lock(&(test->print_mutex)) != 0) {
+            perror("iperf_json_finish: pthread_mutex_lock");
+        }
         fprintf(test->outfile, "%s\n", test->json_output_string);
+        if (pthread_mutex_unlock(&(test->print_mutex)) != 0) {
+            perror("iperf_json_finish: pthread_mutex_unlock");
+        }
         iflush(test);
         cJSON_Delete(test->json_top);
         test->json_top = NULL;
@@ -4896,6 +4927,10 @@ iperf_printf(struct iperf_test *test, const char* format, ...)
     struct tm *ltm = NULL;
     char *ct = NULL;
 
+    if (pthread_mutex_lock(&(test->print_mutex)) != 0) {
+        perror("iperf_print: pthread_mutex_lock");
+    }
+
     /* Timestamp if requested */
     if (iperf_get_test_timestamps(test)) {
 	time(&now);
@@ -4919,28 +4954,36 @@ iperf_printf(struct iperf_test *test, const char* format, ...)
     if (test->role == 'c') {
 	if (ct) {
             r0 = fprintf(test->outfile, "%s", ct);
-            if (r0 < 0)
-                return r0;
+            if (r0 < 0) {
+                r = r0;
+                goto bottom;
+            }
             r += r0;
 	}
 	if (test->title) {
 	    r0 = fprintf(test->outfile, "%s:  ", test->title);
-            if (r0 < 0)
-                return r0;
+            if (r0 < 0) {
+                r = r0;
+                goto bottom;
+            }
             r += r0;
         }
 	va_start(argp, format);
 	r0 = vfprintf(test->outfile, format, argp);
 	va_end(argp);
-        if (r0 < 0)
-            return r0;
+        if (r0 < 0) {
+            r = r0;
+            goto bottom;
+        }
         r += r0;
     }
     else if (test->role == 's') {
 	if (ct) {
 	    r0 = snprintf(linebuffer, sizeof(linebuffer), "%s", ct);
-            if (r0 < 0)
-                return r0;
+            if (r0 < 0) {
+                r = r0;
+                goto bottom;
+            }
             r += r0;
 	}
         /* Should always be true as long as sizeof(ct) < sizeof(linebuffer) */
@@ -4948,8 +4991,10 @@ iperf_printf(struct iperf_test *test, const char* format, ...)
             va_start(argp, format);
             r0 = vsnprintf(linebuffer + r, sizeof(linebuffer) - r, format, argp);
             va_end(argp);
-            if (r0 < 0)
-                return r0;
+            if (r0 < 0) {
+                r = r0;
+                goto bottom;
+            }
             r += r0;
         }
 	fprintf(test->outfile, "%s", linebuffer);
@@ -4960,11 +5005,34 @@ iperf_printf(struct iperf_test *test, const char* format, ...)
 	    TAILQ_INSERT_TAIL(&(test->server_output_list), l, textlineentries);
 	}
     }
+
+  bottom:
+    if (pthread_mutex_unlock(&(test->print_mutex)) != 0) {
+        perror("iperf_print: pthread_mutex_unlock");
+    }
+
     return r;
 }
 
 int
 iflush(struct iperf_test *test)
 {
-    return fflush(test->outfile);
+    int rc2;
+
+    int rc;
+    rc = pthread_mutex_lock(&(test->print_mutex));
+    if (rc != 0) {
+        errno = rc;
+        perror("iflush: pthread_mutex_lock");
+    }
+
+    rc2 = fflush(test->outfile);
+
+    rc = pthread_mutex_unlock(&(test->print_mutex));
+    if (rc != 0) {
+        errno = rc;
+        perror("iflush: pthread_mutex_unlock");
+    }
+
+    return rc2;
 }
