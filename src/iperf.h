@@ -31,9 +31,8 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#ifdef HAVE_STDINT_H
 #include <stdint.h>
-#endif
+#include <inttypes.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #ifndef _GNU_SOURCE
@@ -51,22 +50,11 @@
 #include <sys/cpuset.h>
 #endif /* HAVE_CPUSET_SETAFFINITY */
 
-#if defined(HAVE_INTTYPES_H)
-# include <inttypes.h>
-#else
-# ifndef PRIu64
-#  if sizeof(long) == 8
-#   define PRIu64		"lu"
-#  else
-#   define PRIu64		"llu"
-#  endif
-# endif
-#endif
-
 #include "timer.h"
 #include "queue.h"
 #include "cjson.h"
 #include "iperf_time.h"
+#include "portable_endian.h"
 
 #if defined(HAVE_SSL)
 #include <openssl/bio.h>
@@ -90,6 +78,10 @@ typedef uint64_t atomic_uint_fast64_t;
 typedef uint_fast64_t iperf_size_t;
 typedef atomic_uint_fast64_t atomic_iperf_size_t;
 #endif // __IPERF_API_H
+
+#if (defined(__vxworks)) || (defined(__VXWORKS__))
+typedef unsigned int uint
+#endif // __vxworks or __VXWORKS__
 
 struct iperf_interval_results
 {
@@ -337,6 +329,7 @@ struct iperf_test
     int       bidirectional;                    /* --bidirectional */
     int	      verbose;                          /* -V option - verbose mode */
     int	      json_output;                      /* -J option - JSON output */
+    int	      json_stream;                      /* --json-stream */
     int	      zerocopy;                         /* -Z option - use sendfile */
     int       debug;				/* -d option - enable debug */
     enum      debug_level debug_level;          /* -d option option - level of debug messages to show */
@@ -451,9 +444,16 @@ struct iperf_test
 extern int gerror; /* error value from getaddrinfo(3), for use in internal error handling */
 
 /* UDP "connect" message and reply (textual value for Wireshark, etc. readability - legacy was numeric) */
+
+#if BYTE_ORDER == BIG_ENDIAN
+#define UDP_CONNECT_MSG 0x39383736
+#define UDP_CONNECT_REPLY 0x36373839
+#define LEGACY_UDP_CONNECT_REPLY 0xb168de3a
+#else
 #define UDP_CONNECT_MSG 0x36373839          // "6789" - legacy value was 123456789
 #define UDP_CONNECT_REPLY 0x39383736        // "9876" - legacy value was 987654321
 #define LEGACY_UDP_CONNECT_REPLY 987654321  // Old servers may still reply with the legacy value
+#endif
 
 /* In Reverse mode, maximum number of packets to wait for "accept" response - to handle out of order packets */
 #define MAX_REVERSE_OUT_OF_ORDER_PACKETS 2
