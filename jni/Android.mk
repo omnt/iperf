@@ -3,7 +3,7 @@ LOCAL_PATH := /tmp/iperf
 include $(CLEAR_VARS)
 include $(BUILD_HOST_SHARED_LIBRARY)
 
-LOCAL_MODULE := iperf3.16
+LOCAL_MODULE := iperf3.17.1
 LOCAL_MODULE_TAGS := dev
 LOCAL_CFLAGS := -DHAVE_CONFIG_H -UAF_INET6 -w -Wno-error=format-security -funwind-tables -D_GNU_SOURCE
 LOCAL_LDLIBS := -llog

@@ -1,9 +1,8 @@
-name: Docker Build and Release
-
+name: Build iPerf3 Docker
 on:
   push:
     tags:
-      - 'v[0-9].[0-9][0-9]'
+      - 'v[0-9]+(\.[0-9]+)*'
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
@@ -19,7 +18,7 @@ jobs:
         run: docker run --name iperf3container iperf3-builder-image
 
       - name: Copy files from Docker container
-        run: | 
+        run: |
           docker cp iperf3container:/tmp/iperf/jniLibs ./jniLibs
           zip -r jniLibs.zip ./jniLibs
 
