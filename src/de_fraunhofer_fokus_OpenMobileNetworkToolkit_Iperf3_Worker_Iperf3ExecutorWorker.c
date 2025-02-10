@@ -4,7 +4,7 @@
 #include <android/log.h>
 #include <stdlib.h>
 
-#include "de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3Worker.h"
+#include "de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker.h"
 #include "main.h"
 
 #define  LOG_TAG    "iperf3Wrapper_native_Worker"
@@ -12,7 +12,9 @@
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define BUF_SIZE 4096
 
-JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Wrapper(JNIEnv *env, jobject obj, jobjectArray stringArray, jstring cache_path) {
+
+
+JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Wrapper(JNIEnv *env, jobject obj, jobjectArray stringArray, jstring cache_path) {
     jsize ArgCount = (*env)->GetArrayLength(env, stringArray) + 1;
     char **argv = malloc(sizeof(char*) * ArgCount);
     if (argv == NULL) {
@@ -53,7 +55,6 @@ JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_
             LOGE("Failed to obtain object element.");
         }
     }
-
     int result = main(ArgCount, argv);
     LOGD("result: %d\n", result);
 
@@ -66,7 +67,29 @@ JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_
     return result;
 }
 
-JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Stop(JNIEnv *env, jobject obj) {
+
+int start_logger(const char *app_name)
+{
+    tag = app_name;
+
+    /* make stdout line-buffered and stderr unbuffered */
+    setvbuf(stdout, 0, _IOLBF, 0);
+    setvbuf(stderr, 0, _IONBF, 0);
+
+    /* create the pipe and redirect stdout and stderr */
+    pipe(pfd);
+    dup2(pfd[1], 1);
+    dup2(pfd[1], 2);
+
+    /* spawn the logging thread */
+    if(pthread_create(&thr, 0, thread_func, 0) == -1)
+        return -1;
+    pthread_detach(thr);
+    return 0;
+}
+
+
+JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Stop(JNIEnv *env, jobject obj) {
     LOGD("stop function called!\n");
     stopRun();
     LOGD("exiting....!\n");

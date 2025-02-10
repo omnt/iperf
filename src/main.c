@@ -117,13 +117,15 @@ main(int argc, char **argv)
     if (!test)
         iperf_errexit(NULL, "create new test error - %s", iperf_strerror(i_errno));
     iperf_defaults(test);	/* sets defaults */
-
+	
     if (iperf_parse_arguments(test, argc, argv) < 0) {
-        iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
+    	iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
         fprintf(stderr, "\n");
     	usage();
         return 1;
     }
+
+
     int result_test = 0;
     int ret_value = setjmp(jmp_bf);
     switch (ret_value){

@@ -30,7 +30,7 @@ LOCAL_SRC_FILES := \
     src/tcp_info.c \
     src/timer.c \
     src/units.c \
-    src/de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3Worker.c
+    src/de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker.c
 
 LOCAL_DISABLE_FORMAT_STRING_CHECKS := true
 

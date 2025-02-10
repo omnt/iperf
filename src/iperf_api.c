@@ -57,6 +57,13 @@
 #include <stdarg.h>
 #include <math.h>
 
+
+#include <android/log.h>
+#define LOG_TAG "iperf-api"
+#define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+
 #if defined(HAVE_CPUSET_SETAFFINITY)
 #include <sys/param.h>
 #include <sys/cpuset.h>
@@ -1065,6 +1072,7 @@ iperf_parse_hostname(struct iperf_test *test, char *spec, char **p, char **p1) {
 int
 iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
 {
+
     static struct option longopts[] =
     {
         {"port", required_argument, NULL, 'p'},
@@ -1170,6 +1178,8 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
     char *client_username = NULL, *client_rsa_public_key = NULL, *server_rsa_private_key = NULL;
     FILE *ptr_file;
 #endif /* HAVE_SSL */
+
+
 
     while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:M:N46S:L:ZO:F:A:T:C:dI:hX:", longopts, NULL)) != -1) {
         switch (flag) {
@@ -1654,6 +1664,11 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
         }
     }
 
+
+
+
+
+
     /* Check flag / role compatibility. */
     if (test->role == 'c' && server_flag) {
         i_errno = IESERVERONLY;
@@ -1663,6 +1678,8 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
         i_errno = IECLIENTONLY;
         return -1;
     }
+
+
 
 #if defined(HAVE_SSL)
 
