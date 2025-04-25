@@ -1,3 +1,4 @@
+#include "main.h"
 /*
  * iperf, Copyright (c) 2014-2023, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
@@ -25,6 +26,7 @@
  * file for complete information.
  */
 #include "iperf_config.h"
+#include <android/log.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,16 +48,18 @@
 #include "iperf_locale.h"
 #include "net.h"
 #include "units.h"
+#define  LOG_TAG    "main"
 
+#define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static int run(struct iperf_test *test);
-
-
+jmp_buf jmp_bf;
+struct iperf_test *test;
 /**************************************************************************/
 int
 main(int argc, char **argv)
 {
-    struct iperf_test *test;
 
     /*
      * Atomics check. We prefer to have atomic types (which is
@@ -117,16 +121,29 @@ main(int argc, char **argv)
     if (iperf_parse_arguments(test, argc, argv) < 0) {
         iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
         fprintf(stderr, "\n");
-        usage();
-        exit(1);
+    	usage();
+        return 1;
+    }
+    int result_test = 0;
+    int ret_value = setjmp(jmp_bf);
+    switch (ret_value){
+        case 0:
+            result_test = run(test);
+            break;
+        case 50:
+            result_test = 0;
+            break;
+        default:
+            result_test = ret_value;
+            break;
     }
 
-    if (run(test) < 0)
-        iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+	if (result_test < 0)
+		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 
     iperf_free_test(test);
 
-    return 0;
+    return result_test;
 }
 
 
@@ -138,6 +155,12 @@ sigend_handler(int sig)
 {
     signed_sig = sig;
     longjmp(sigend_jmp_buf, 1);
+}
+
+
+void stopRun(){
+	LOGD("stopRun() called!\n");
+	test->done = 1;
 }
 
 /**************************************************************************/
@@ -196,10 +219,10 @@ run(struct iperf_test *test)
 	case 'c':
 	    if (iperf_create_pidfile(test) < 0) {
 		i_errno = IEPIDFILE;
-		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+			iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 	    }
 	    if (iperf_run_client(test) < 0)
-		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+			iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
 	    iperf_delete_pidfile(test);
             break;
         default:
