@@ -2,11 +2,9 @@
 
 This repository is a fork of the original [iPerf3 repository](https://github.com/esnet/iperf) 
 specifically adapted for use with the OpenMobileNetworkToolkit developed by Fraunhofer FOKUS. 
-The primary goal of this fork is to make iPerf3 compatible with 
-Android Apps by replacing `exit()` calls with `longjmp();`. 
 Adapted versions of iPerf will be tagged with the format v3.XX.
 
-#### Current adapted version is iPerf 3.17.1.
+#### Current adapted version is iPerf 3.18
 
 ### How to use the Shared Library
 
@@ -41,7 +39,7 @@ app/src/main/jniLibs/
 Load the Library
 ```Java
 static {
-    System.loadLibrary("iperf3.15");
+    System.loadLibrary("iperf3.18");
     Log.i(TAG, "iperf.so loaded!");
 }
 ```
@@ -54,6 +52,11 @@ Add the call to the App
 iperf3Wrapper(cmd, getApplicationContext().getApplicationInfo().nativeLibraryDir);
 ```
 For a working example have a look [here](https://github.com/omnt/OpenMobileNetworkToolkit/blob/main/app/src/main/java/de/fraunhofer/fokus/OpenMobileNetworkToolkit/Iperf3/Iperf3Worker.java)
+
+## Please note
+
+Starting with v3.18 we do not patch iPerf3 anymore, since we use now the RemoteWorkManager-API of Android, starting with OMNT Release 0.6.
+
 ## Acknowledgments
 
 - android-iperf - [Github](https://github.com/KnightWhoSayNi/android-iperf)
