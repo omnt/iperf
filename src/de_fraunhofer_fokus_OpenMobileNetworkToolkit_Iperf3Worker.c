@@ -12,7 +12,7 @@
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define BUF_SIZE 4096
 
-JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Wrapper(JNIEnv *env, jobject obj, jobjectArray stringArray, jstring cache_path) {
+JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Wrapper(JNIEnv *env, jobject obj, jobjectArray stringArray, jstring cache_path) {
     jsize ArgCount = (*env)->GetArrayLength(env, stringArray) + 1;
     char **argv = malloc(sizeof(char*) * ArgCount);
     if (argv == NULL) {

@@ -12,7 +12,7 @@ extern "C" {
  * Method:    iperf3Wrapper
  * Signature: ([Ljava/lang/String;Ljava/lang/String;)I
  */
-JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Wrapper
+JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Wrapper
   (JNIEnv *, jobject, jobjectArray, jstring);
 
 JNIEXPORT jint JNICALL Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Stop
