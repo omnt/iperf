@@ -74,12 +74,12 @@ stdenvNoCC.mkDerivation {
     # Reuse upstream's own source list for the library ...
     make -C src -j"$NIX_BUILD_CORES" libiperf.la
 
-    # ... and add the (patched) main() plus the OMNT JNI wrapper on top.
-    $CC $CFLAGS -DHAVE_CONFIG_H -Isrc -c src/main.c -o main.o
+    # ... and add the OMNT JNI wrapper on top. It drives a test through
+    # libiperf's API itself; upstream's main.c is not used.
     $CC $CFLAGS -DHAVE_CONFIG_H -Isrc -c ${../jni/iperf3_jni.c} -o iperf3_jni.o
 
     $CC -shared -o ${soname} \
-      main.o iperf3_jni.o src/.libs/libiperf.a \
+      iperf3_jni.o src/.libs/libiperf.a \
       -llog -lm \
       -Wl,-soname,${soname} \
       -Wl,--no-undefined \
@@ -111,11 +111,14 @@ stdenvNoCC.mkDerivation {
       }'
 
     # 2. The JNI entry points OMNT calls must be exported.
+    #    Capture nm's output first: piping it into `grep -q` makes nm die of
+    #    SIGPIPE on an early match, which fails the check under pipefail.
+    exported="$($NM -D --defined-only ${soname})"
     for sym in \
-      Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Wrapper \
-      Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Stop
+      Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Run \
+      Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Stop
     do
-      $NM -D --defined-only ${soname} | grep -qw "$sym" || { echo "missing JNI symbol $sym" >&2; exit 1; }
+      grep -qw "$sym" <<< "$exported" || { echo "missing JNI symbol $sym" >&2; exit 1; }
     done
     echo "JNI symbols present"
 
