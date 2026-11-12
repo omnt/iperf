@@ -32,6 +32,19 @@ diff -ruN a/src/iperf_api.c b/src/iperf_api.c
          }
      }
  
+diff -ruN a/src/iperf_client_api.c b/src/iperf_client_api.c
+--- a/src/iperf_client_api.c
++++ b/src/iperf_client_api.c
+@@ -575,6 +575,9 @@
+ 
+     /* show final summary */
+     test->reporter_callback(test);
++    /* OMNT: the stream sockets are closed above; never close their (reusable) fds again in-process */
++    SLIST_FOREACH(sp, &test->streams, streams)
++        sp->socket = -1;
+ 
+     /* Send response only if no error in server */
+     if (test->state > 0) {
 diff -ruN a/src/iperf_error.c b/src/iperf_error.c
 --- a/src/iperf_error.c
 +++ b/src/iperf_error.c
@@ -52,6 +65,45 @@ diff -ruN a/src/iperf_error.c b/src/iperf_error.c
  }
  
  int i_errno = 0;
+diff -ruN a/src/iperf_pthread.c b/src/iperf_pthread.c
+--- a/src/iperf_pthread.c
++++ b/src/iperf_pthread.c
+@@ -6,6 +6,17 @@
+  * as Android NDK does not support `pthread_cancel()`.
+  */
+ 
++/*
++ * OMNT: not SIGUSR1. In an app process ART owns SIGUSR1 and blocks it in every
++ * thread started from Java; stream threads inherit that mask, so a SIGUSR1
++ * "cancel" stays pending forever and pthread_join() hangs (e.g. a UDP server
++ * receiver blocked in recv() at the end of a test). Installing a handler would
++ * also replace ART's SIGUSR1 disposition process-wide. SIGRTMIN is free for
++ * apps (bionic keeps its own real-time signals below it); the embedder
++ * unblocks it in the thread that starts the test.
++ */
++#define IPERF_THREAD_EXIT_SIGNAL SIGRTMIN
++
+ #include <string.h>
+ #include <signal.h>
+ #include "iperf_pthread.h"
+@@ -24,7 +35,7 @@
+     actions.sa_flags = 0;
+     actions.sa_handler = iperf_thread_exit_handler;
+ 
+-    rc = sigaction(SIGUSR1, &actions, NULL);
++    rc = sigaction(IPERF_THREAD_EXIT_SIGNAL, &actions, NULL);
+     return rc;
+ }
+ 
+@@ -33,7 +44,7 @@
+ int pthread_cancel(pthread_t thread_id) {
+     int status;
+     if ((status = iperf_set_thread_exit_handler()) == 0) {
+-        status = pthread_kill(thread_id, SIGUSR1);
++        status = pthread_kill(thread_id, IPERF_THREAD_EXIT_SIGNAL);
+     }
+     return status;
+ }
 diff -ruN a/src/iperf_server_api.c b/src/iperf_server_api.c
 --- a/src/iperf_server_api.c
 +++ b/src/iperf_server_api.c
@@ -63,7 +115,45 @@ diff -ruN a/src/iperf_server_api.c b/src/iperf_server_api.c
  #include "iperf_api.h"
  #include "iperf_udp.h"
  #include "iperf_tcp.h"
-@@ -716,7 +717,7 @@
+@@ -275,6 +276,13 @@
+                 close(sp->socket);
+             }
+             test->reporter_callback(test);
++            /*
++             * OMNT: the stream sockets are closed above, but cleanup_server() closes every
++             * sp->socket > -1 again. In-process the fd numbers may already belong to the app
++             * by then. Reset them after reporting (reports print the socket number).
++             */
++            SLIST_FOREACH(sp, &test->streams, streams)
++                sp->socket = -1;
+             if (iperf_set_send_state(test, EXCHANGE_RESULTS) != 0)
+                 return -1;
+             if (iperf_exchange_results(test) < 0)
+@@ -303,6 +311,7 @@
+                 FD_CLR(sp->socket, &test->read_set);
+                 FD_CLR(sp->socket, &test->write_set);
+                 close(sp->socket);
++                sp->socket = -1; /* OMNT: see TEST_END */
+             }
+             iperf_set_test_state(test, IPERF_DONE);
+             break;
+@@ -629,6 +638,15 @@
+     rcv_timeout_us = (test->settings->rcv_timeout.secs * SEC_TO_US) + test->settings->rcv_timeout.usecs;
+ 
+     while (test->state != IPERF_DONE) {
++        /*
++         * OMNT: the embedding app asked to stop. It also interrupts blocking calls (EINTR), so
++         * this is reached even while waiting for a client.
++         */
++        if (IPERF_STOP_REQUESTED()) {
++            cleanup_server(test);
++            i_errno = IESERVERTERM;
++            return -1;
++        }
+ 
+     // Check if average transfer rate was exceeded (condition set in the callback routines)
+ 	if (test->bitrate_limit_exceeded) {
+@@ -716,7 +734,7 @@
  			  if (test->debug)
                              printf("No connection request was received for %d sec in one-off mode; exiting.\n",
  				   test->settings->idle_timeout);
@@ -75,7 +165,7 @@ diff -ruN a/src/iperf_server_api.c b/src/iperf_server_api.c
 diff -ruN a/src/omnt_exit.h b/src/omnt_exit.h
 --- a/src/omnt_exit.h
 +++ b/src/omnt_exit.h
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,38 @@
 +/*
 + * OMNT (OpenMobileNetworkToolkit) addition for running iperf3 in-process
 + * on Android through libiperf's API (see jni/iperf3_jni.c in omnt/iperf).
@@ -99,9 +189,18 @@ diff -ruN a/src/omnt_exit.h b/src/omnt_exit.h
 + */
 +void iperf_exit_jump(int code) __attribute__ ((noreturn));
 +#define IPERF_EXIT(code) iperf_exit_jump(code)
++
++/*
++ * Non-zero once the embedder asked the running test to stop. The server loop
++ * checks it on every pass; the embedder interrupts blocking calls so that the
++ * check is reached even while the server waits for a client.
++ */
++int iperf_stop_requested(void);
++#define IPERF_STOP_REQUESTED() iperf_stop_requested()
 +#else
 +#include <stdlib.h>
 +#define IPERF_EXIT(code) exit(code)
++#define IPERF_STOP_REQUESTED() 0
 +#endif
 +
 +#endif /* IPERF_OMNT_EXIT_H */

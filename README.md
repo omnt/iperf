@@ -78,7 +78,10 @@ involved. The callback runs on iperf3's thread: hand the event off quickly.
 
 Per call, the wrapper resets the state libiperf keeps in globals (getopt's
 `optind`/`optreset`, `i_errno`), ignores `SIGPIPE` for the duration of the test
-and forwards iperf3's stdout/stderr to logcat (tag `iperf3_stdio`). Only one
+and forwards iperf3's stdout/stderr to logcat (tag `iperf3_stdio`). It unblocks
+`SIGRTMIN` (iperf3's stream-thread "cancel" on Android; the patch moves it off
+`SIGUSR1`, which ART owns and blocks in Java threads) and `SIGURG`, which
+`iperf3Stop()` sends to wake a server waiting for a client. Only one
 test can run per process at a time; OMNT runs each test in a worker process of
 its own.
 

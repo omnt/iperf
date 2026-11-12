@@ -30,7 +30,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <unistd.h>
 #include <android/log.h>
 
@@ -56,7 +55,11 @@ static jmethodID g_on_event;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct iperf_test *g_test;   /* guarded by g_lock */
+static pthread_t g_test_thread;     /* thread running g_test; guarded by g_lock */
 static volatile int g_stop_requested;
+
+/* iperf3Run() return value if this process is still busy with another test. */
+#define RESULT_BUSY (-2)
 
 static jmp_buf g_exit_jmp;
 static int g_exit_jmp_armed;        /* only touched by the test thread */
@@ -73,6 +76,44 @@ iperf_exit_jump(int code)
     /* Not on the test thread (e.g. a stream thread): nothing to jump to. */
     LOGE("iperf3 exit(%d) outside of the test thread; terminating process", code);
     exit(code);
+}
+
+/* Polled by the server loop (IPERF_STOP_REQUESTED() in omnt_exit.h). */
+int
+iperf_stop_requested(void)
+{
+    return g_stop_requested;
+}
+
+/*
+ * Stopping a server: iperf3Stop() sends this signal to the test thread. The
+ * empty handler is installed without SA_RESTART, so the blocking call the
+ * server waits in (select(), accept(), read()) returns with EINTR and the
+ * server loop sees iperf_stop_requested(). SIGURG is not used by ART and is
+ * ignored by default, so a stray one is harmless.
+ */
+#define STOP_SIGNAL SIGURG
+
+static void
+stop_signal_handler(int sig)
+{
+    (void)sig;
+}
+
+static void
+install_stop_signal_once(void)
+{
+    static int done = 0;
+    struct sigaction sa;
+    if (done)
+        return;
+    done = 1;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = stop_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0; /* no SA_RESTART: interrupt blocking calls */
+    if (sigaction(STOP_SIGNAL, &sa, NULL) != 0)
+        LOGE("sigaction(SIGURG) failed: %s", strerror(errno));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -273,6 +314,7 @@ set_current_test(struct iperf_test *test)
 {
     pthread_mutex_lock(&g_lock);
     g_test = test;
+    g_test_thread = pthread_self();
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -288,13 +330,14 @@ Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWo
     struct sigaction ign, old_pipe;
 
     redirect_stdio_once();
+    install_stop_signal_once();
 
     pthread_mutex_lock(&g_lock);
     int busy = (g_test != NULL || g_listener != NULL);
     pthread_mutex_unlock(&g_lock);
     if (busy) {
         LOGE("an iperf3 test is already running in this process");
-        return -1;
+        return RESULT_BUSY;
     }
 
     /* Java callback target. */
@@ -341,6 +384,18 @@ Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWo
     optreset = 1;
     i_errno = 0;
     g_stop_requested = 0;
+
+    /*
+     * This is a Java thread: ART blocks some signals in it, and iperf3's stream
+     * threads inherit its mask. Unblock the two signals iperf3 relies on here:
+     * the stream-thread "cancel" (SIGRTMIN, see iperf_pthread.c in the patch)
+     * and our stop signal. Otherwise ending a stream thread blocks forever.
+     */
+    sigset_t unblock;
+    sigemptyset(&unblock);
+    sigaddset(&unblock, SIGRTMIN);
+    sigaddset(&unblock, STOP_SIGNAL);
+    pthread_sigmask(SIG_UNBLOCK, &unblock, NULL);
 
     /* Writing to a closed socket must fail with EPIPE, not kill the app. */
     memset(&ign, 0, sizeof(ign));
@@ -420,14 +475,15 @@ Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWo
     pthread_mutex_lock(&g_lock);
     g_stop_requested = 1;
     if (g_test != NULL) {
-        /* A client ends the test at its next timer tick and reports "end". */
+        /* A client ends the test at its next timer tick and still reports "end". */
         g_test->done = 1;
         /*
-         * A server may sit in select()/accept() waiting for a client;
-         * shutting the listening socket down wakes it up.
+         * A server may wait for a client indefinitely: interrupt the blocking
+         * call so the server loop sees the stop request. (Not for a client:
+         * its graceful end would be cut short.)
          */
-        if (g_test->role == 's' && g_test->listener >= 0)
-            shutdown(g_test->listener, SHUT_RDWR);
+        if (g_test->role == 's')
+            pthread_kill(g_test_thread, STOP_SIGNAL);
     }
     pthread_mutex_unlock(&g_lock);
 }
