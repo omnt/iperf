@@ -111,11 +111,14 @@ stdenvNoCC.mkDerivation {
       }'
 
     # 2. The JNI entry points OMNT calls must be exported.
+    #    Capture nm's output first: piping it into `grep -q` makes nm die of
+    #    SIGPIPE on an early match, which fails the check under pipefail.
+    exported="$($NM -D --defined-only ${soname})"
     for sym in \
       Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Worker_Iperf3ExecutorWorker_iperf3Wrapper \
       Java_de_fraunhofer_fokus_OpenMobileNetworkToolkit_Iperf3_Iperf3Worker_iperf3Stop
     do
-      $NM -D --defined-only ${soname} | grep -qw "$sym" || { echo "missing JNI symbol $sym" >&2; exit 1; }
+      grep -qw "$sym" <<< "$exported" || { echo "missing JNI symbol $sym" >&2; exit 1; }
     done
     echo "JNI symbols present"
 
