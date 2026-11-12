@@ -1,49 +1,78 @@
-name: Build iPerf3 Docker
+name: Build libiperf3
+
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t iperf3-builder-image .
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
-      - name: Run Docker container
-        run: docker run --name iperf3container iperf3-builder-image
-
-      - name: Copy files from Docker container
+      - name: Build all ABIs (includes 16 KB alignment + JNI symbol checks)
         run: |
-          docker cp iperf3container:/tmp/iperf/jniLibs ./jniLibs
-          zip -r jniLibs.zip ./jniLibs
+          nix build .#jniLibsZip -L
+          cp result/jniLibs.zip jniLibs.zip
+          unzip -l jniLibs.zip
 
-      - name: Save state
-        id: set_tag
+      - name: Read pinned iperf version
+        id: pin
+        run: echo "version=$(jq -r .version iperf-version.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jniLibs-iperf${{ steps.pin.outputs.version }}
+          path: jniLibs.zip
+
+      # Releases happen when:
+      #  * a v* tag is pushed manually, or
+      #  * main contains an iperf version that has no v<version> release yet
+      #    (e.g. after merging an automated update PR).
+      - name: Decide on release
+        id: release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pin.outputs.version }}
         run: |
-          echo "tag=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
-          echo "tag=$GITHUB_REF_NAME"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            case "$GITHUB_REF_NAME" in
+              "v$VERSION"|"v$VERSION"-*) ;;
+              *) echo "tag $GITHUB_REF_NAME does not match pinned iperf $VERSION" >&2; exit 1 ;;
+            esac
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "release v$VERSION already exists, nothing to do"
+          else
+            echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
-        with:
-          tag_name: ${{steps.set_tag.outputs.tag}}
-          release_name: Release iPerf ${{steps.set_tag.outputs.tag}}
+        if: steps.release.outputs.tag != ''
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload release assets
-        id: upload-release-assets
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{steps.create_release.outputs.upload_url}}
-          asset_path: ./jniLibs.zip
-          asset_name: jniLibs
-          asset_content_type: application/zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.pin.outputs.version }}
+        run: |
+          # OMNT downloads releases/latest/download/jniLibs, so keep that asset name.
+          cp jniLibs.zip jniLibs
+          gh release create "$TAG" jniLibs jniLibs.zip \
+            --target "$GITHUB_SHA" \
+            --title "Release iPerf $TAG" \
+            --notes "libiperf3.so built from upstream iperf $VERSION (https://github.com/esnet/iperf/releases/tag/$VERSION) for arm64-v8a, armeabi-v7a, x86 and x86_64, 16 KB page aligned. Load it with System.loadLibrary(\"iperf3\")."

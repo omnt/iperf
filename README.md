@@ -1,65 +1,109 @@
-## Repository Purpose
+# iperf3 for OMNT (Android JNI)
 
-This repository is a fork of the original [iPerf3 repository](https://github.com/esnet/iperf) 
-specifically adapted for use with the OpenMobileNetworkToolkit developed by Fraunhofer FOKUS. 
-Adapted versions of iPerf will be tagged with the format v3.XX.
+This repository builds [iPerf3](https://github.com/esnet/iperf) as a JNI shared
+library (`libiperf3.so`) for the
+[OpenMobileNetworkToolkit](https://github.com/omnt/OpenMobileNetworkToolkit)
+(OMNT) developed by Fraunhofer FOKUS.
 
-#### Current adapted version is iPerf 3.18
+It no longer carries a fork of the iperf sources. The build fetches the pristine
+upstream release pinned in [`iperf-version.json`](iperf-version.json), applies
+the small OMNT patch in [`patches/`](patches), adds the JNI wrapper from
+[`jni/`](jni), and compiles everything with the Android NDK from nixpkgs.
 
-### How to use the Shared Library
+* ABIs: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`
+* Minimum API level: 29
+* All `LOAD` segments are **16 KB page aligned**, as required for Android 15+
+  devices. The build fails if they aren't.
 
-#### 1. How to build/get libiperf
-You can download the latest libiperf from [here](https://github.com/omnt/iperf/releases), or you can build it locally with the Docker file:
+## Building locally
+
+You need [Nix](https://nixos.org/download/) with flakes enabled. If they aren't
+enabled, add `--extra-experimental-features 'nix-command flakes'` to the
+commands below.
+
 ```bash
-docker build -t android-ndk:latest . 
-docker run -d --name android-ndk-container android-ndk 
-docker cp -a android-ndk-container:/tmp/iperf/jniLibs ./ 
+nix build .#iperf3          # -> result/jniLibs/<abi>/libiperf3.so
+nix build .#jniLibsZip      # -> result/jniLibs.zip (same as the release asset)
+nix build .#iperf3-arm64-v8a  # a single ABI
 ```
 
+`nix build` (without an attribute) is the same as `nix build .#iperf3`.
 
-#### 2. Add the files to the Android App
-Copy the executables to the jniLibs path, the default path is `app/src/main/jniLibs`.
-For every [ABI](https://developer.android.com/ndk/guides/abis) a directory needs to be created.
-It should look like this:
+Each per-ABI build also checks that:
+
+1. every `PT_LOAD` segment has an alignment of at least `0x4000` (16 KB), and
+2. the JNI entry points OMNT calls are exported.
+
+The Android NDK is unfree software. The flake accepts its license on your
+behalf (`android_sdk.accept_license = true`).
+
+## Using the library in OMNT
+
+Download `jniLibs` from the
+[latest release](https://github.com/omnt/iperf/releases/latest), or build it
+yourself, and unpack it into `app/src/main`:
 
 ```
 app/src/main/jniLibs/
-├─ arm64-v8a/
-│  ├─ libiperf3.12.so
-├─ armeabi-v7a/
-│  ├─ libiperf3.12.so
-├─ x86/
-│  ├─ libiperf3.12.so
-├─ x86_64/
-│  ├─ libiperf3.12.so
+├─ arm64-v8a/libiperf3.so
+├─ armeabi-v7a/libiperf3.so
+├─ x86/libiperf3.so
+└─ x86_64/libiperf3.so
 ```
 
-#### 3. Integrate iPerf into an android app
+The library name no longer contains the iperf version, so the app doesn't need
+to change when iperf is updated:
 
-Load the Library
-```Java
-static {
-    System.loadLibrary("iperf3.18");
-    Log.i(TAG, "iperf.so loaded!");
-}
+```java
+System.loadLibrary("iperf3");
 ```
-Add the wrapepr function to the App
-```Java
-private native int iperf3Wrapper(String[] argv, String nativeLibraryDir);
-```
-Add the call to the App
-```Java
+
+The JNI interface is unchanged:
+
+```java
+// de.fraunhofer.fokus.OpenMobileNetworkToolkit.Iperf3.Worker.Iperf3ExecutorWorker
+private native int iperf3Wrapper(String[] argv, String cache);
+
 iperf3Wrapper(cmd, getApplicationContext().getApplicationInfo().nativeLibraryDir);
 ```
-For a working example have a look [here](https://github.com/omnt/OpenMobileNetworkToolkit/blob/main/app/src/main/java/de/fraunhofer/fokus/OpenMobileNetworkToolkit/Iperf3/Iperf3Worker.java)
 
-## Please note
+`argv` is the iperf3 command line without the program name. The call returns
+iperf3's exit code.
 
-Starting with v3.18 we do not patch iPerf3 anymore, since we use now the RemoteWorkManager-API of Android, starting with OMNT Release 0.6.
+## Automatic updates and releases
+
+* **`update-iperf.yml`** runs daily (and on demand) and looks for a newer
+  `3.x` tag on esnet/iperf. When it finds one, it bumps `iperf-version.json`,
+  updates `flake.lock` (newest NDK), builds all ABIs and opens a pull request.
+  If the build fails, usually because the patch needs rebasing, the PR is opened
+  as a draft.
+* **`build.yml`** builds on every push and pull request and uploads `jniLibs.zip`
+  as a workflow artifact. On `main`, if there is no release `v<version>` yet
+  (for example right after merging an update PR), it creates that release with
+  the `jniLibs` asset that OMNT's CI downloads. Pushing a tag `v<version>` or
+  `v<version>-N` manually also creates a release.
+
+To update by hand:
+
+```bash
+nix develop -c scripts/update-iperf.sh          # newest upstream tag
+nix develop -c scripts/update-iperf.sh 3.22     # a specific version
+nix build .#iperf3
+```
+
+## What the OMNT patch changes
+
+OMNT runs iperf3 in-process from a worker, so `main()` must return instead of
+calling `exit()` on normal paths (`-v`, `-h`, usage errors, the one-off idle
+timeout). The patch:
+
+* adds `src/main.h`, which provides `IPERF_EXIT()`. On Android this
+  `longjmp()`s back into `main()`; elsewhere it calls `exit()` as before.
+* makes `main()` return the test result and exposes `stopRun()`, which the JNI
+  `iperf3Stop` call uses to end a running test.
 
 ## Acknowledgments
 
-- android-iperf - [Github](https://github.com/KnightWhoSayNi/android-iperf)
-- iPerf - [Github](https://github.com/esnet/iperf)
+- android-iperf - [GitHub](https://github.com/KnightWhoSayNi/android-iperf)
+- iPerf - [GitHub](https://github.com/esnet/iperf)
 - integrating iPerf - [matt9j.net](https://matt9j.net/posts/integrating-iperf/)
-

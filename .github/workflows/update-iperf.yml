@@ -1,0 +1,75 @@
+name: Check for new iperf3 release
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'iperf version to update to (default: newest upstream tag)'
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Bump iperf-version.json
+        id: bump
+        run: scripts/update-iperf.sh ${{ inputs.version }}
+
+      - name: Update nixpkgs (newest NDK)
+        if: steps.bump.outputs.updated == 'true'
+        run: nix flake update
+
+      - name: Build and check
+        id: build
+        if: steps.bump.outputs.updated == 'true'
+        continue-on-error: true
+        run: nix build .#jniLibsZip -L
+
+      - name: Write PR description
+        if: steps.bump.outputs.updated == 'true'
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          OUTCOME: ${{ steps.build.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          rm -f result
+          {
+            echo "Upstream release: https://github.com/esnet/iperf/releases/tag/$VERSION"
+            echo
+            echo "Build of all ABIs (incl. 16 KB alignment and JNI symbol checks): **$OUTCOME**"
+            echo
+            if [ "$OUTCOME" = success ]; then
+              echo "Merging this PR publishes release \`v$VERSION\`, which OMNT picks up via \`releases/latest\`."
+            else
+              echo "The build failed. Most likely \`patches/0001-omnt-run-iperf3-in-process.patch\` has to be rebased onto iperf $VERSION; see the workflow log."
+            fi
+            echo
+            echo "Workflow run: $RUN_URL"
+          } > "$RUNNER_TEMP/pr-body.md"
+
+      # PRs opened with GITHUB_TOKEN do not trigger other workflows, so the
+      # build result of this job is reported in the PR itself. A failed build
+      # (usually the OMNT patch no longer applies) opens a draft PR to fix up.
+      - name: Open pull request
+        if: steps.bump.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: update/iperf-${{ steps.bump.outputs.version }}
+          commit-message: 'iperf: ${{ steps.bump.outputs.previous }} -> ${{ steps.bump.outputs.version }}'
+          title: 'iperf: ${{ steps.bump.outputs.previous }} -> ${{ steps.bump.outputs.version }}'
+          draft: ${{ steps.build.outcome != 'success' }}
+          delete-branch: true
+          body-path: ${{ runner.temp }}/pr-body.md
