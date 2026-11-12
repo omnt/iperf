@@ -1,11 +1,11 @@
 diff -ruN a/src/iperf_api.c b/src/iperf_api.c
---- a/src/iperf_api.c	2026-09-29 18:47:02.000000000 +0000
-+++ b/src/iperf_api.c	2026-11-12 14:26:55.933805871 +0000
+--- a/src/iperf_api.c
++++ b/src/iperf_api.c
 @@ -74,6 +74,7 @@
  
  #include "net.h"
  #include "iperf.h"
-+#include "main.h"
++#include "omnt_exit.h"
  #include "iperf_api.h"
  #include "iperf_tcp.h"
  #include "iperf_time.h"
@@ -32,14 +32,34 @@ diff -ruN a/src/iperf_api.c b/src/iperf_api.c
          }
      }
  
+diff -ruN a/src/iperf_error.c b/src/iperf_error.c
+--- a/src/iperf_error.c
++++ b/src/iperf_error.c
+@@ -31,6 +31,7 @@
+ #include <stdlib.h>
+ #include <stdarg.h>
+ #include "iperf.h"
++#include "omnt_exit.h"
+ #include "iperf_api.h"
+ 
+ int gerror;
+@@ -154,7 +155,7 @@
+     va_end(argp);
+     if (test)
+         iperf_delete_pidfile(test);
+-    exit(exit_code);
++    IPERF_EXIT(exit_code);
+ }
+ 
+ int i_errno = 0;
 diff -ruN a/src/iperf_server_api.c b/src/iperf_server_api.c
---- a/src/iperf_server_api.c	2026-09-29 18:47:02.000000000 +0000
-+++ b/src/iperf_server_api.c	2026-11-12 14:26:55.934875032 +0000
+--- a/src/iperf_server_api.c
++++ b/src/iperf_server_api.c
 @@ -48,6 +48,7 @@
  #include <signal.h>
  
  #include "iperf.h"
-+#include "main.h"
++#include "omnt_exit.h"
  #include "iperf_api.h"
  #include "iperf_udp.h"
  #include "iperf_tcp.h"
@@ -52,117 +72,36 @@ diff -ruN a/src/iperf_server_api.c b/src/iperf_server_api.c
  			}
  
                          return 2;
-diff -ruN a/src/main.c b/src/main.c
---- a/src/main.c	2026-09-29 18:47:02.000000000 +0000
-+++ b/src/main.c	2026-11-12 14:26:55.935007207 +0000
-@@ -46,16 +46,29 @@
- #include "iperf_locale.h"
- #include "net.h"
- #include "units.h"
-+#include "main.h"
-+
-+#ifdef __ANDROID__
-+#include <android/log.h>
-+#define LOG_TAG "iperf3_main"
-+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-+#else
-+#define LOGD(...) ((void)0)
-+#endif
- 
- 
- static int run(struct iperf_test *test);
- 
-+jmp_buf jmp_bf;
-+struct iperf_test *test;
-+
- 
- /**************************************************************************/
- int
- main(int argc, char **argv)
- {
--    struct iperf_test *test;
-+    int jmp_rc;
-+    int result;
- 
-     /*
-      * Atomics check. We prefer to have atomic types (which is
-@@ -114,19 +127,39 @@
-         iperf_errexit(NULL, "create new test error - %s", iperf_strerror(i_errno));
-     iperf_defaults(test);	/* sets defaults */
- 
-+    /* IPERF_EXIT() from argument parsing or the server lands here. */
-+    jmp_rc = setjmp(jmp_bf);
-+    if (jmp_rc != 0) {
-+        result = jmp_rc - IPERF_EXIT_JMP_BASE;
-+        iperf_free_test(test);
-+        test = NULL;
-+        return result;
-+    }
-+
-     if (iperf_parse_arguments(test, argc, argv) < 0) {
-         iperf_err(test, "parameter error - %s", iperf_strerror(i_errno));
-         fprintf(stderr, "\n");
-         usage();
--        exit(1);
-+        IPERF_EXIT(1);
-     }
- 
--    if (run(test) < 0)
-+    result = run(test);
-+    if (result < 0)
-         iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
- 
-     iperf_free_test(test);
-+    test = NULL;
-+
-+    return result;
-+}
- 
--    return 0;
-+/* Called from the JNI wrapper to ask a running test to finish. */
-+void
-+stopRun(void)
-+{
-+    LOGD("stopRun() called");
-+    if (test != NULL)
-+        test->done = 1;
- }
- 
- 
-diff -ruN a/src/main.h b/src/main.h
---- a/src/main.h	1970-01-01 00:00:00.000000000 +0000
-+++ b/src/main.h	2026-11-12 14:26:55.611788911 +0000
-@@ -0,0 +1,33 @@
+diff -ruN a/src/omnt_exit.h b/src/omnt_exit.h
+--- a/src/omnt_exit.h
++++ b/src/omnt_exit.h
+@@ -0,0 +1,29 @@
 +/*
-+ * OMNT (OpenMobileNetworkToolkit) additions for running iperf3 in-process
-+ * from a JNI wrapper on Android instead of as a standalone binary.
++ * OMNT (OpenMobileNetworkToolkit) addition for running iperf3 in-process
++ * on Android through libiperf's API (see jni/iperf3_jni.c in omnt/iperf).
 + *
 + * iperf3 calls exit() on a few "normal" paths (-v, -h, usage errors,
-+ * one-off idle timeout). Inside an app that would kill the hosting
-+ * process, so those paths use IPERF_EXIT(), which longjmp()s back into
-+ * main() and returns the exit code to the caller instead.
++ * one-off idle timeout) and, via iperf_exit(), on every fatal error
++ * (server busy, connection refused or reset, ...). Inside an app that
++ * would kill the hosting process, so those paths use IPERF_EXIT(). The
++ * embedder provides iperf_exit_jump(), which longjmp()s back to where it
++ * started the test and returns the exit code to its caller instead.
 + */
-+#ifndef IPERF_MAIN_H
-+#define IPERF_MAIN_H
-+
-+#include <setjmp.h>
-+#include <stdlib.h>
-+
-+#include "iperf.h"
-+
-+extern jmp_buf jmp_bf;
-+extern struct iperf_test *test;
-+
-+/* setjmp() cannot return 0 via longjmp(), so exit codes are offset. */
-+#define IPERF_EXIT_JMP_BASE 0x100
++#ifndef IPERF_OMNT_EXIT_H
++#define IPERF_OMNT_EXIT_H
 +
 +#ifdef __ANDROID__
-+#define IPERF_EXIT(code) longjmp(jmp_bf, IPERF_EXIT_JMP_BASE + (code))
++/*
++ * Must not return. Implementations jump back to the embedder when called
++ * on the thread running the test, and fall back to exit() otherwise (e.g.
++ * from a stream thread), since longjmp() to another thread's stack is
++ * undefined.
++ */
++void iperf_exit_jump(int code) __attribute__ ((noreturn));
++#define IPERF_EXIT(code) iperf_exit_jump(code)
 +#else
++#include <stdlib.h>
 +#define IPERF_EXIT(code) exit(code)
 +#endif
 +
-+int main(int argc, char **argv);
-+void stopRun(void);
-+
-+#endif /* IPERF_MAIN_H */
++#endif /* IPERF_OMNT_EXIT_H */

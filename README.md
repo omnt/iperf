@@ -58,17 +58,29 @@ to change when iperf is updated:
 System.loadLibrary("iperf3");
 ```
 
-The JNI interface is unchanged:
+The JNI interface ([`jni/iperf3_jni.c`](jni/iperf3_jni.c)):
 
 ```java
 // de.fraunhofer.fokus.OpenMobileNetworkToolkit.Iperf3.Worker.Iperf3ExecutorWorker
-private native int iperf3Wrapper(String[] argv, String cache);
+private native int iperf3Run(String[] argv);   // blocks until the test is done
+private native void iperf3Stop();              // ends a running test early
 
-iperf3Wrapper(cmd, getApplicationContext().getApplicationInfo().nativeLibraryDir);
+// called from native code for every iperf3 --json-stream event
+private void onIperf3Event(byte[] utf8Json);
 ```
 
-`argv` is the iperf3 command line without the program name. The call returns
-iperf3's exit code.
+`argv` is the iperf3 command line without the program name and must contain
+`--json-stream`. `iperf3Run()` drives one test through libiperf's API (what
+upstream `main()` + `run()` do) and returns iperf3's exit code. While the test
+runs, every JSON stream line (`start`, `interval`, `end`, `error`, ...) is passed
+to `onIperf3Event()` through libiperf's JSON callback, so no log file is
+involved. The callback runs on iperf3's thread: hand the event off quickly.
+
+Per call, the wrapper resets the state libiperf keeps in globals (getopt's
+`optind`/`optreset`, `i_errno`), ignores `SIGPIPE` for the duration of the test
+and forwards iperf3's stdout/stderr to logcat (tag `iperf3_stdio`). Only one
+test can run per process at a time; OMNT runs each test in a worker process of
+its own.
 
 ## Automatic updates and releases
 
@@ -93,14 +105,17 @@ nix build .#iperf3
 
 ## What the OMNT patch changes
 
-OMNT runs iperf3 in-process from a worker, so `main()` must return instead of
-calling `exit()` on normal paths (`-v`, `-h`, usage errors, the one-off idle
-timeout). The patch:
+OMNT runs iperf3 in-process from a worker, so libiperf must not call `exit()`:
+not on its normal paths (`-v`, `-h`, usage errors, the one-off idle timeout)
+and not on fatal errors (`iperf_errexit()`). The patch
 
-* adds `src/main.h`, which provides `IPERF_EXIT()`. On Android this
-  `longjmp()`s back into `main()`; elsewhere it calls `exit()` as before.
-* makes `main()` return the test result and exposes `stopRun()`, which the JNI
-  `iperf3Stop` call uses to end a running test.
+* adds `src/omnt_exit.h`, which provides `IPERF_EXIT()`, and uses it instead of
+  `exit()` in `iperf_api.c`, `iperf_error.c` and `iperf_server_api.c`. On
+  Android it calls `iperf_exit_jump()`, which the JNI wrapper implements by
+  `longjmp()`ing back to where it started the test; elsewhere it calls `exit()`
+  as before.
+
+Upstream's `main.c` is not used.
 
 ## Acknowledgments
 
